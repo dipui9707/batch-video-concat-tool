@@ -64,10 +64,48 @@ def test_export_writes_lua_script_with_paths_and_sequences(tmp_path: Path) -> No
     assert f"local galleryDir = [[{str((output_dir / '.gallery')).replace(chr(92), '/')}]]" in content
     assert "string.find(lowerKey, 'cache')" in content
     assert "string.find(lowerKey, 'gallery')" in content
-    assert 'clipMap["1"] = importedClips[1]' in content
-    assert 'local clips = { clipMap["2"], clipMap["1"] }' in content
+    assert "local tasks = {" in content
+    assert "local function resolveClips(clipIds)" in content
+    assert "local function queueTask(task)" in content
+    assert "clipIds = { [[2]], [[1]] }" in content
     assert "project:SetCurrentRenderFormatAndCodec('mp4', 'H.264')" in content
     assert "project:SetSetting('timelineResolutionWidth', '1920')" in content
     assert "project:SetSetting('timelineResolutionHeight', '1080')" in content
-    assert "local timelineName = [[TL_2_1]]" in content
-    assert "CustomName = [[OUT_1_2]]" in content
+    assert "timelineName = [[TL_2_1]]" in content
+    assert "outputName = [[OUT_1_2]]" in content
+
+
+def test_export_uses_shared_task_queue_code_for_many_tasks(tmp_path: Path) -> None:
+    exporter = ResolveScriptExporter()
+    script_path = tmp_path / "job.lua"
+    output_dir = tmp_path / "output"
+    output_dir.mkdir()
+    source_paths = tuple(Path(fr"C:\video\{index}.mp4") for index in range(1, 5))
+    tasks = tuple(
+        GenerationTask(
+            task_id=f"T_{index:05d}",
+            layer=3,
+            pattern_type="one_group_two_clips",
+            shift=None,
+            source_group_ids=(1, 2, 3),
+            clip_ids=("1", "2", "3", "4"),
+            clip_paths=source_paths,
+            timeline_name=f"TL_{index:05d}",
+            output_name=f"OUT_{index:05d}",
+        )
+        for index in range(1, 260)
+    )
+
+    exporter.export(
+        script_path=script_path,
+        source_paths=source_paths,
+        tasks=tasks,
+        output_dir=output_dir,
+        aspect_ratio=ExportAspectRatio.HORIZONTAL_16_9,
+    )
+
+    content = script_path.read_text(encoding="utf-8")
+
+    assert content.count("local function queueTask(task)") == 1
+    assert content.count("local timeline = mediaPool:CreateEmptyTimeline(timelineName)") == 1
+    assert content.count("taskId = [[T_") == len(tasks)
